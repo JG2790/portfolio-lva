@@ -262,6 +262,8 @@ export default function App() {
   const [maestroSel, setMaestroSel] = useState(null)
   const [newRow,     setNewRow]     = useState({ symbol:"",name:"",type:"CEDEAR",currentValue:"",rendimiento:"",avgPrice:"",targetPrice:"",notes:"",alertHigh:"",alertLow:"" })
   const [cotizaciones,setCotizaciones] = useState({})
+  const [cantidades,  setCantidades]   = useState({})
+  const cantidadesRef = useRef({})     // ref para acceso sincrónico en callbacks
   const [loadingCot,  setLoadingCot]   = useState(false)
   const [lastUpdate,  setLastUpdate]   = useState(null)
 
@@ -275,9 +277,11 @@ export default function App() {
         setHistory(h)
 
         // Cargamos posiciones reales desde IOL
+        const cantidadesMap = {}
         const iolData = await getPortafolioIOL()
         const merged = iolData.map(row => {
           const extra = extras.find(e => e.symbol === row.symbol) || {}
+        cantidadesMap[row.symbol] = row.cantidad
           return {
             symbol:       row.symbol,
             name:         row.nombre,
@@ -300,6 +304,8 @@ export default function App() {
           }
         })
 
+        setCantidades(cantidadesMap)
+        cantidadesRef.current = cantidadesMap
         setPortfolio(merged.length ? merged : INITIAL_PORTFOLIO)
         setLastUpdate(new Date().toLocaleTimeString("es-AR"))
       } catch(e) {
@@ -332,10 +338,12 @@ export default function App() {
       setPortfolio(prev => prev.map(r => {
         const cot = cots[r.symbol]
         if (!cot || !cot.ultimo) return r
+        const cantidad = cantidadesRef.current[r.symbol] || 1
+        const valorTotal = cot.ultimo * cantidad
         const rendimiento = r.avgPrice > 0
           ? ((cot.ultimo - r.avgPrice) / r.avgPrice * 100)
           : cot.variacion ?? r.rendimiento
-        return { ...r, currentValue: cot.ultimo, rendimiento: Number(rendimiento.toFixed(2)) }
+        return { ...r, currentValue: valorTotal, rendimiento: Number(rendimiento.toFixed(2)) }
       }))
       showToast("✓ Cotizaciones actualizadas")
     } catch(e) { showToast("⚠️ Error IOL: " + e.message, "err") }
@@ -346,17 +354,18 @@ export default function App() {
     setLoadingCot(true)
     try {
       const data = await getPortafolioIOL()
+      const nuevasCantidades = {}
+      data.forEach(row => { nuevasCantidades[row.symbol] = row.cantidad })
+      setCantidades(nuevasCantidades)
+      cantidadesRef.current = nuevasCantidades
       setPortfolio(prev => {
-        // Actualizá los que ya existen
         const updated = prev.map(r => {
           const row = data.find(d => d.symbol === r.symbol)
           if (!row) return r
           return { ...r, currentValue: row.valorActual, rendimiento: Number(row.ganancia.toFixed(2)) }
         })
-        // Agregá los que vienen de IOL y no están en la lista
         data.forEach(row => {
-          const existe = updated.find(r => r.symbol === row.symbol)
-          if (!existe) {
+          if (!updated.find(r => r.symbol === row.symbol)) {
             updated.push({
               symbol: row.symbol, name: row.nombre, type: "CEDEAR",
               currentValue: row.valorActual, rendimiento: Number(row.ganancia.toFixed(2)),

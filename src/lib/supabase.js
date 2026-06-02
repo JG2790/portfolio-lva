@@ -31,24 +31,33 @@ export async function getPortfolio() {
 }
 
 export async function upsertPortfolio(rows) {
+  // Borramos todas las filas del usuario y reinsertamos
+  const { error: delError } = await supabase
+    .from('portfolio')
+    .delete()
+    .eq('user_id', USER_ID)
+  if (delError) throw delError
+
+  if (!rows.length) return
+
   const records = rows.map(r => ({
-    id:            r._id || undefined,
     user_id:       USER_ID,
     symbol:        r.symbol,
-    name:          r.name,
-    type:          r.type,
-    current_value: r.currentValue,
-    rendimiento:   r.rendimiento,
-    avg_price:     r.avgPrice,
-    target_price:  r.targetPrice,
-    notes:         r.notes,
-    alert_high:    r.alertHigh,
-    alert_low:     r.alertLow,
+    name:          r.name  || r.symbol,
+    type:          r.type  || 'CEDEAR',
+    current_value: Number(r.currentValue) || 0,
+    rendimiento:   Number(r.rendimiento)  || 0,
+    avg_price:     Number(r.avgPrice)     || 0,
+    target_price:  Number(r.targetPrice)  || 0,
+    notes:         r.notes     || '',
+    alert_high:    Number(r.alertHigh)    || 0,
+    alert_low:     Number(r.alertLow)     || 0,
     updated_at:    new Date().toISOString(),
   }))
+
   const { error } = await supabase
     .from('portfolio')
-    .upsert(records, { onConflict: 'id' })
+    .insert(records)
   if (error) throw error
 }
 
