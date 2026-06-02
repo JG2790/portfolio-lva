@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import {
   getPortfolio, upsertPortfolio, deletePortfolioRow,
   getHistory, insertHistory, clearHistory, clearPortfolio
 } from "./lib/supabase"
+import { refreshCotizaciones, getPortafolioIOL } from "./lib/iol"
 
 // ─── DATOS INICIALES ──────────────────────────────────────────────────────────
 const INITIAL_PORTFOLIO = [
@@ -11,6 +12,7 @@ const INITIAL_PORTFOLIO = [
   { symbol:"PAAS", name:"Pan American Silver", type:"CEDEAR",   currentValue:56520,  rendimiento:0.14,  avgPrice:0,     targetPrice:0,     notes:"", alertHigh:0, alertLow:0 },
   { symbol:"HMY",  name:"Harmony Gold",        type:"CEDEAR",   currentValue:54320,  rendimiento:14.74, avgPrice:0,     targetPrice:0,     notes:"", alertHigh:0, alertLow:0 },
   { symbol:"MSFT", name:"Microsoft",           type:"CEDEAR",   currentValue:22260,  rendimiento:6.05,  avgPrice:0,     targetPrice:0,     notes:"", alertHigh:0, alertLow:0 },
+  { symbol:"NVDA", name:"Nvidia Corporation",   type:"CEDEAR",   currentValue:251100, rendimiento:2.49,  avgPrice:0,     targetPrice:0,     notes:"", alertHigh:0, alertLow:0 },
   { symbol:"MOS",  name:"Mosaic Co.",          type:"CEDEAR",   currentValue:0,      rendimiento:0,     avgPrice:0,     targetPrice:0,     notes:"", alertHigh:0, alertLow:0 },
   { symbol:"NTR",  name:"Nutrien Ltd.",        type:"CEDEAR",   currentValue:0,      rendimiento:0,     avgPrice:0,     targetPrice:0,     notes:"", alertHigh:0, alertLow:0 },
   { symbol:"ICL",  name:"ICL Group",           type:"CEDEAR",   currentValue:0,      rendimiento:0,     avgPrice:0,     targetPrice:0,     notes:"", alertHigh:0, alertLow:0 },
@@ -19,10 +21,10 @@ const INITIAL_PORTFOLIO = [
 const MAESTROS_COLORS = { "Acción AR":"#f59e0b","CEDEAR":"#06b6d4","ETF":"#8b5cf6","FCI":"#10b981","Crypto":"#f97316","Bono":"#ec4899" }
 
 const INVERSORES = [
-  { name:"Warren Buffett", style:"Value investing",        sectors:["Finanzas","Consumo","Energía","Seguros"],          topHoldings:["AAPL 49%","BAC 10%","AXP 9%"],    filosofia:"Compra empresas con ventaja competitiva durable. Largo plazo. Nada de crypto ni commodities puros.", emoji:"🎩", match:"BRK, KO, AXP, BAC" },
-  { name:"Ray Dalio",      style:"All Weather / Macro",    sectors:["Oro","Commodities","Bonos","Emergentes"],          topHoldings:["GLD 14%","SPY 10%","EEM 9%"],     filosofia:"Diversificación radical. Oro como cobertura. Ciclos económicos. Balance entre activos de riesgo y seguros.", emoji:"⚖️", match:"GLD, GDX, Commodities" },
-  { name:"Michael Burry",  style:"Deep Value / Contrarian",sectors:["Acciones subvaluadas","China","Materias primas"], topHoldings:["JD 18%","BABA 15%","HCA 12%"],    filosofia:"Busca activos odiados con fundamentos sólidos. Alto riesgo, alta convicción. Anticíclico.", emoji:"🔍", match:"Energía, Metales, YPF" },
-  { name:"Peter Lynch",    style:"GARP",                   sectors:["Consumo","Tech","Salud","Retail"],                 topHoldings:["Consumer staples","Regional banks","Growth mid-caps"], filosofia:"Invertí en lo que conocés. P/E razonable + crecimiento. Pequeñas y medianas con potencial.", emoji:"📈", match:"Acciones regionales, midcaps" },
+  { name:"Warren Buffett", style:"Value investing",         sectors:["Finanzas","Consumo","Energía","Seguros"],          topHoldings:["AAPL 49%","BAC 10%","AXP 9%"],             filosofia:"Compra empresas con ventaja competitiva durable. Largo plazo. Nada de crypto ni commodities puros.", emoji:"🎩", match:"BRK, KO, AXP, BAC" },
+  { name:"Ray Dalio",      style:"All Weather / Macro",     sectors:["Oro","Commodities","Bonos","Emergentes"],          topHoldings:["GLD 14%","SPY 10%","EEM 9%"],              filosofia:"Diversificación radical. Oro como cobertura. Ciclos económicos. Balance entre activos de riesgo y seguros.", emoji:"⚖️", match:"GLD, GDX, Commodities" },
+  { name:"Michael Burry",  style:"Deep Value / Contrarian", sectors:["Acciones subvaluadas","China","Materias primas"],  topHoldings:["JD 18%","BABA 15%","HCA 12%"],             filosofia:"Busca activos odiados con fundamentos sólidos. Alto riesgo, alta convicción. Anticíclico.", emoji:"🔍", match:"Energía, Metales, YPF" },
+  { name:"Peter Lynch",    style:"GARP",                    sectors:["Consumo","Tech","Salud","Retail"],                 topHoldings:["Consumer staples","Regional banks","Growth mid-caps"], filosofia:"Invertí en lo que conocés. P/E razonable + crecimiento. Pequeñas y medianas con potencial.", emoji:"📈", match:"Acciones regionales, midcaps" },
 ]
 
 const THEMES = {
@@ -91,15 +93,15 @@ function Badge({ label, color, t }) {
 
 // ─── BALANCES TAB ─────────────────────────────────────────────────────────────
 function BalancesTab({ t, isDark, portfolio, btn, inp, card, showToast, setHistory }) {
-  const [file,      setFile]      = useState(null)
-  const [fileB64,   setFileB64]   = useState(null)
-  const [fileType,  setFileType]  = useState(null)
-  const [empresa,   setEmpresa]   = useState("")
-  const [tickers,   setTickers]   = useState([])
-  const [sectores,  setSectores]  = useState(["Energía"])
-  const [loading,   setLoading]   = useState(false)
-  const [result,    setResult]    = useState("")
-  const [fase,      setFase]      = useState("")
+  const [file,     setFile]     = useState(null)
+  const [fileB64,  setFileB64]  = useState(null)
+  const [fileType, setFileType] = useState(null)
+  const [empresa,  setEmpresa]  = useState("")
+  const [tickers,  setTickers]  = useState([])
+  const [sectores, setSectores] = useState(["Energía"])
+  const [loading,  setLoading]  = useState(false)
+  const [result,   setResult]   = useState("")
+  const [fase,     setFase]     = useState("")
   const fileRef = useRef()
 
   const SECTORES = ["Energía","Minería","Tecnología","Finanzas","Consumo","Agro","Industria","Salud","Telecomunicaciones"]
@@ -194,7 +196,7 @@ function BalancesTab({ t, isDark, portfolio, btn, inp, card, showToast, setHisto
         <div>
           <div style={{ fontSize:9, color:t.muted, marginBottom:5 }}>Sectores (mínimo 1)</div>
           <div style={{ display:"flex", gap:5, flexWrap:"wrap" }}>
-            {["Energía","Minería","Tecnología","Finanzas","Consumo","Agro","Industria","Salud","Telecomunicaciones"].map(s => {
+            {SECTORES.map(s => {
               const on = sectores.includes(s)
               return <button key={s} onClick={()=>toggleSector(s)} style={{ background:on?t.accent:"transparent", border:`1px solid ${on?t.accent:t.border}`, borderRadius:6, padding:"5px 10px", color:on?"#000":t.muted, cursor:"pointer", fontFamily:"inherit", fontSize:10, fontWeight:on?700:400, transition:"all 0.15s", marginBottom:4 }}>{on?"✓ ":""}{s}</button>
             })}
@@ -244,40 +246,75 @@ function BalancesTab({ t, isDark, portfolio, btn, inp, card, showToast, setHisto
 
 // ─── APP PRINCIPAL ────────────────────────────────────────────────────────────
 export default function App() {
-  const [isDark,    setIsDark]    = useState(true)
-  const [portfolio, setPortfolio] = useState([])
-  const [history,   setHistory]   = useState([])
-  const [ready,     setReady]     = useState(false)
-  const [saving,    setSaving]    = useState(false)
-  const [editing,   setEditing]   = useState(false)
-  const [analysis,  setAnalysis]  = useState("")
-  const [loading,   setLoading]   = useState(false)
-  const [tab,       setTab]       = useState("cartera")
-  const [toast,     setToast]     = useState({ msg:"", type:"ok" })
-  const [noteModal, setNoteModal] = useState(null)
-  const [alertModal,setAlertModal]= useState(null)
-  const [showClear, setShowClear] = useState(false)
-  const [maestroSel,setMaestroSel]= useState(null)
-  const [newRow,    setNewRow]    = useState({ symbol:"",name:"",type:"CEDEAR",currentValue:"",rendimiento:"",avgPrice:"",targetPrice:"",notes:"",alertHigh:"",alertLow:"" })
+  const [isDark,     setIsDark]     = useState(true)
+  const [portfolio,  setPortfolio]  = useState([])
+  const [history,    setHistory]    = useState([])
+  const [ready,      setReady]      = useState(false)
+  const [saving,     setSaving]     = useState(false)
+  const [editing,    setEditing]    = useState(false)
+  const [analysis,   setAnalysis]   = useState("")
+  const [loading,    setLoading]    = useState(false)
+  const [tab,        setTab]        = useState("cartera")
+  const [toast,      setToast]      = useState({ msg:"", type:"ok" })
+  const [noteModal,  setNoteModal]  = useState(null)
+  const [alertModal, setAlertModal] = useState(null)
+  const [showClear,  setShowClear]  = useState(false)
+  const [maestroSel, setMaestroSel] = useState(null)
+  const [newRow,     setNewRow]     = useState({ symbol:"",name:"",type:"CEDEAR",currentValue:"",rendimiento:"",avgPrice:"",targetPrice:"",notes:"",alertHigh:"",alertLow:"" })
+  const [cotizaciones,setCotizaciones] = useState({})
+  const [loadingCot,  setLoadingCot]   = useState(false)
+  const [lastUpdate,  setLastUpdate]   = useState(null)
 
   const t = isDark ? THEMES.dark : THEMES.light
 
-  // ── CARGA INICIAL desde Supabase ──
   useEffect(() => {
     (async () => {
       try {
-        const [p, h] = await Promise.all([getPortfolio(), getHistory()])
-        setPortfolio(p.length ? p : INITIAL_PORTFOLIO)
+        // Cargamos extras desde Supabase (notas, alertas, targets)
+        const [extras, h] = await Promise.all([getPortfolio(), getHistory()])
         setHistory(h)
+
+        // Cargamos posiciones reales desde IOL
+        const iolData = await getPortafolioIOL()
+        const merged = iolData.map(row => {
+          const extra = extras.find(e => e.symbol === row.symbol) || {}
+          return {
+            symbol:       row.symbol,
+            name:         row.nombre,
+            type:         extra.type || "CEDEAR",
+            currentValue: row.valorActual,
+            rendimiento:  Number(row.ganancia.toFixed(2)),
+            avgPrice:     extra.avgPrice  || 0,
+            targetPrice:  extra.targetPrice || 0,
+            notes:        extra.notes    || "",
+            alertHigh:    extra.alertHigh || 0,
+            alertLow:     extra.alertLow  || 0,
+            _id:          extra._id,
+          }
+        })
+
+        // Agregamos activos de Supabase sin posición en IOL (ej: watchlist)
+        extras.forEach(e => {
+          if (!merged.find(m => m.symbol === e.symbol)) {
+            merged.push({ ...e, currentValue: e.currentValue || 0 })
+          }
+        })
+
+        setPortfolio(merged.length ? merged : INITIAL_PORTFOLIO)
+        setLastUpdate(new Date().toLocaleTimeString("es-AR"))
       } catch(e) {
-        console.error(e)
-        setPortfolio(INITIAL_PORTFOLIO)
+        console.error("Error carga inicial:", e)
+        // Fallback a Supabase si IOL falla
+        try {
+          const [p, h] = await Promise.all([getPortfolio(), getHistory()])
+          setPortfolio(p.length ? p : INITIAL_PORTFOLIO)
+          setHistory(h)
+        } catch { setPortfolio(INITIAL_PORTFOLIO) }
       }
       setReady(true)
     })()
   }, [])
 
-  // ── GUARDAR en Supabase cuando cambia portfolio ──
   useEffect(() => {
     if (!ready || portfolio.length === 0) return
     setSaving(true)
@@ -285,6 +322,55 @@ export default function App() {
   }, [portfolio, ready])
 
   function showToast(msg, type="ok") { setToast({ msg, type }); setTimeout(() => setToast({ msg:"", type:"ok" }), 2500) }
+
+  const actualizarCotizaciones = useCallback(async () => {
+    setLoadingCot(true)
+    try {
+      const cots = await refreshCotizaciones(portfolio)
+      setCotizaciones(cots)
+      setLastUpdate(new Date().toLocaleTimeString("es-AR"))
+      setPortfolio(prev => prev.map(r => {
+        const cot = cots[r.symbol]
+        if (!cot || !cot.ultimo) return r
+        const rendimiento = r.avgPrice > 0
+          ? ((cot.ultimo - r.avgPrice) / r.avgPrice * 100)
+          : cot.variacion ?? r.rendimiento
+        return { ...r, currentValue: cot.ultimo, rendimiento: Number(rendimiento.toFixed(2)) }
+      }))
+      showToast("✓ Cotizaciones actualizadas")
+    } catch(e) { showToast("⚠️ Error IOL: " + e.message, "err") }
+    setLoadingCot(false)
+  }, [portfolio])
+
+  const cargarPortafolioIOL = useCallback(async () => {
+    setLoadingCot(true)
+    try {
+      const data = await getPortafolioIOL()
+      setPortfolio(prev => {
+        // Actualizá los que ya existen
+        const updated = prev.map(r => {
+          const row = data.find(d => d.symbol === r.symbol)
+          if (!row) return r
+          return { ...r, currentValue: row.valorActual, rendimiento: Number(row.ganancia.toFixed(2)) }
+        })
+        // Agregá los que vienen de IOL y no están en la lista
+        data.forEach(row => {
+          const existe = updated.find(r => r.symbol === row.symbol)
+          if (!existe) {
+            updated.push({
+              symbol: row.symbol, name: row.nombre, type: "CEDEAR",
+              currentValue: row.valorActual, rendimiento: Number(row.ganancia.toFixed(2)),
+              avgPrice: 0, targetPrice: 0, notes: "", alertHigh: 0, alertLow: 0
+            })
+          }
+        })
+        return updated
+      })
+      setLastUpdate(new Date().toLocaleTimeString("es-AR"))
+      showToast("✓ Portafolio IOL sincronizado")
+    } catch(e) { showToast("⚠️ Error IOL: " + e.message, "err") }
+    setLoadingCot(false)
+  }, [])
 
   const active  = portfolio.filter(r => r.currentValue > 0)
   const total   = active.reduce((s,r) => s + Number(r.currentValue), 0)
@@ -295,14 +381,17 @@ export default function App() {
   async function runAnalysis(mode) {
     setLoading(true); setAnalysis(""); setTab("analisis")
     const hoy = new Date().toLocaleDateString("es-AR",{day:"2-digit",month:"long",year:"numeric"})
-    const res = portfolio.map(r => `${r.symbol}(${r.type}):$${r.currentValue} rend:${r.rendimiento}%${r.targetPrice?" tgt:$"+r.targetPrice:""}${r.notes?" nota:"+r.notes:""}`).join("\n")
+    const res = portfolio.map(r => {
+      const cot = cotizaciones[r.symbol]
+      return `${r.symbol}(${r.type}):$${r.currentValue}${cot?` live:$${cot.ultimo} var:${cot.variacion}%`:""} rend:${r.rendimiento}%${r.targetPrice?" tgt:$"+r.targetPrice:""}${r.notes?" nota:"+r.notes:""}`
+    }).join("\n")
     const P = {
-      full:      `Hoy es ${hoy}. Sos analista financiero experto en mercados argentinos y globales. Analiza esta cartera con total:$${total.toLocaleString()} rend:${avgRend.toFixed(2)}%\n${res}\n\n1.📋 RESUMEN EJECUTIVO\n2.💪 FORTALEZAS\n3.⚠️ RIESGOS\n4.🎯 OPORTUNIDADES\n5.🚨 SEÑALES DE SALIDA por activo\n6.🌍 CONTEXTO MACRO\n\nEspañol, directo, accionable.`,
-      alertas:   `Hoy es ${hoy}. Señales de alerta para:\n${res}\nPor activo:\n🟢 Mantener si...\n🟡 Reducir si...\n🔴 Salir si...\nCon niveles de precio en ARS.`,
-      macro:     `Hoy es ${hoy}. Analista macro. Considera: tensión Ormuz, Brent~$117, oro~$4500, YPF récord, RIGI Vaca Muerta, disrupciones fósforo.\nCartera:\n${res}\nImpacto próximas 2-4 semanas por activo.`,
-      rebalanceo:`Hoy es ${hoy}. Rebalanceo óptimo. Cartera agresiva (energía+mineras+oro+tech+fósforo):\n${res}\nTotal $${total.toLocaleString()}\n- Porcentajes objetivo\n- Qué vender primero\n- Qué comprar y en qué orden`,
-      merval:    `Hoy es ${hoy}. Comparar esta cartera vs Merval y S&P 500 YTD.\nCartera:\n${res}\nRend ponderado: ${avgRend.toFixed(2)}%\n- Performance relativa vs Merval YTD\n- Performance relativa vs S&P YTD\n- Beta estimado\n- Alpha positivo o no\n- Recomendación`,
-      fosforo:   `Hoy es ${hoy}. Análisis fertilizantes/fósforo (MOS,NTR,ICL) en contexto disrupciones 2026.\nCartera:\n${res}\n¿Conviene entrar? ¿Precio objetivo? ¿% cartera ideal?`,
+      full:      `Hoy es ${hoy}. Sos analista financiero experto. Analiza esta cartera con datos en tiempo real.\nTotal:$${total.toLocaleString()} rend:${avgRend.toFixed(2)}%\n${res}\n\n1.📋 RESUMEN EJECUTIVO\n2.💪 FORTALEZAS\n3.⚠️ RIESGOS\n4.🎯 OPORTUNIDADES\n5.🚨 SEÑALES DE SALIDA por activo\n6.🌍 CONTEXTO MACRO\n\nEspañol, directo, accionable.`,
+      alertas:   `Hoy es ${hoy}. Señales de alerta con cotizaciones actuales:\n${res}\nPor activo:\n🟢 Mantener si...\n🟡 Reducir si...\n🔴 Salir si...\nCon niveles de precio en ARS.`,
+      macro:     `Hoy es ${hoy}. Analista macro. Considera: tensión Ormuz, Brent~$117, oro~$4500, YPF récord, RIGI Vaca Muerta.\nCartera con datos live:\n${res}\nImpacto próximas 2-4 semanas por activo.`,
+      rebalanceo:`Hoy es ${hoy}. Rebalanceo óptimo con cotizaciones actuales:\n${res}\nTotal $${total.toLocaleString()}\n- Porcentajes objetivo\n- Qué vender primero\n- Qué comprar y en qué orden`,
+      merval:    `Hoy es ${hoy}. Comparar cartera vs Merval y S&P 500 YTD.\nCartera live:\n${res}\nRend ponderado: ${avgRend.toFixed(2)}%\n- Performance vs Merval YTD\n- Performance vs S&P YTD\n- Beta estimado\n- Alpha positivo o no`,
+      fosforo:   `Hoy es ${hoy}. Análisis fertilizantes/fósforo (MOS,NTR,ICL).\nCartera:\n${res}\n¿Conviene entrar? ¿Precio objetivo? ¿% cartera ideal?`,
     }
     try {
       const r = await fetch("https://api.anthropic.com/v1/messages", {
@@ -364,21 +453,32 @@ export default function App() {
       )}
 
       {/* HEADER */}
-      <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:16, paddingBottom:14, borderBottom:`1px solid ${t.border}` }}>
+      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:16, paddingBottom:14, borderBottom:`1px solid ${t.border}` }}>
         <div style={{ width:36, height:36, borderRadius:9, background:t.gradient, display:"flex", alignItems:"center", justifyContent:"center", fontSize:18, flexShrink:0 }}>⚡</div>
         <div style={{ flex:1 }}>
           <div style={{ fontSize:16, fontWeight:800, color:t.text, letterSpacing:"-0.5px" }}>Portfolio Analyzer</div>
-          <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
             <span style={{ fontSize:8, color:t.muted, letterSpacing:"2px" }}>CLAUDE AI · LVA</span>
             <span style={{ fontSize:8, color:saving?t.accent:t.green }}>{saving?"● guardando":"● sync"}</span>
+            {lastUpdate && <span style={{ fontSize:8, color:t.muted }}>· IOL {lastUpdate}</span>}
           </div>
         </div>
-        <button onClick={()=>setIsDark(d=>!d)} style={{ background:t.surface, border:`1px solid ${t.border}`, borderRadius:8, padding:"7px 10px", cursor:"pointer", fontSize:15, color:t.text }}>
+        <button onClick={cargarPortafolioIOL} disabled={loadingCot} title="Sincronizar portafolio IOL"
+          style={{ background:t.surface, border:`1px solid ${t.green}`, borderRadius:8, padding:"7px 9px", color:t.green, cursor:loadingCot?"not-allowed":"pointer", fontSize:13, opacity:loadingCot?0.5:1 }}>
+          {loadingCot?"⏳":"🏦"}
+        </button>
+        <button onClick={actualizarCotizaciones} disabled={loadingCot} title="Actualizar cotizaciones IOL"
+          style={{ background:t.surface, border:`1px solid ${t.accent}`, borderRadius:8, padding:"7px 9px", color:t.accent, cursor:loadingCot?"not-allowed":"pointer", fontSize:13, opacity:loadingCot?0.5:1 }}>
+          {loadingCot?"⏳":"🔄"}
+        </button>
+        <button onClick={()=>setIsDark(d=>!d)}
+          style={{ background:t.surface, border:`1px solid ${t.border}`, borderRadius:8, padding:"7px 10px", cursor:"pointer", fontSize:15, color:t.text }}>
           {isDark?"☀️":"🌙"}
         </button>
         <button onClick={()=>downloadTxt(`portfolio-lva-${new Date().toISOString().slice(0,10)}.txt`, `PORTFOLIO ANALYZER — LVA\n${new Date().toLocaleString("es-AR")}\nTotal: $${total.toLocaleString("es-AR")}\nRend: ${avgRend.toFixed(2)}%\n\n${portfolio.filter(r=>r.currentValue>0).map(r=>`${r.symbol} | ${r.type} | $${r.currentValue.toLocaleString()} | ${r.rendimiento}%`).join("\n")}`)}
           style={{ background:t.surface, border:`1px solid ${t.border}`, borderRadius:8, padding:"7px 9px", color:t.muted, cursor:"pointer", fontSize:13 }}>⬇️</button>
-        <button onClick={()=>setShowClear(true)} style={{ background:t.surface, border:`1px solid ${t.border}`, borderRadius:8, padding:"7px 9px", color:t.muted, cursor:"pointer", fontSize:13 }}>🗑️</button>
+        <button onClick={()=>setShowClear(true)}
+          style={{ background:t.surface, border:`1px solid ${t.border}`, borderRadius:8, padding:"7px 9px", color:t.muted, cursor:"pointer", fontSize:13 }}>🗑️</button>
       </div>
 
       {showClear && (
@@ -396,10 +496,10 @@ export default function App() {
       {/* KPIs */}
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:14 }}>
         {[
-          { label:"TOTAL CARTERA",   val:fARS(total),          color:t.accent, sub:"ARS valorizado" },
-          { label:"REND. PONDERADO", val:fPct(avgRend),        color:avgRend>=0?t.green:t.red, sub:"promedio pesado" },
-          { label:"POSICIONES",      val:active.length,        color:t.blue,   sub:"activos activos" },
-          { label:"MAYOR POSICIÓN",  val:topPos?.symbol||"-",  color:"#8b5cf6",sub:topPos?((topPos.currentValue/total*100).toFixed(1)+"% del total"):"" },
+          { label:"TOTAL CARTERA",   val:fARS(total),         color:t.accent, sub:"ARS valorizado" },
+          { label:"REND. PONDERADO", val:fPct(avgRend),       color:avgRend>=0?t.green:t.red, sub:"promedio pesado" },
+          { label:"POSICIONES",      val:active.length,       color:t.blue,   sub:"activos activos" },
+          { label:"MAYOR POSICIÓN",  val:topPos?.symbol||"-", color:"#8b5cf6",sub:topPos?((topPos.currentValue/total*100).toFixed(1)+"% del total"):"" },
         ].map((k,i) => (
           <div key={i} style={{ ...card, marginBottom:0, position:"relative", overflow:"hidden" }}>
             <div style={{ fontSize:7, color:t.muted, letterSpacing:"2px", marginBottom:5, textTransform:"uppercase" }}>{k.label}</div>
@@ -423,36 +523,41 @@ export default function App() {
       {tab === "cartera" && (
         <>
           <div style={{ ...card, marginBottom:14 }}><PieChart data={[...active].sort((a,b)=>b.currentValue-a.currentValue).map(r=>({ label:r.symbol, value:Number(r.currentValue) }))} t={t}/></div>
-          {portfolio.map((r,i) => (
-            <div key={i} style={{ ...card, opacity:r.currentValue>0?1:0.45 }}>
-              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:8 }}>
-                <div style={{ flex:1, minWidth:0 }}>
-                  <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:4, flexWrap:"wrap" }}>
-                    <span style={{ fontWeight:800, fontSize:14, color:t.text }}>{r.symbol}</span>
-                    <Badge label={r.type} color={MAESTROS_COLORS[r.type]} t={t}/>
-                    {r.currentValue===0 && <Badge label="sin posición" t={t}/>}
-                    {(r.alertHigh>0||r.alertLow>0) && <Badge label="🔔 alerta" color="#f59e0b" t={t}/>}
+          {portfolio.map((r,i) => {
+            const cot = cotizaciones[r.symbol]
+            return (
+              <div key={i} style={{ ...card, opacity:r.currentValue>0?1:0.45 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:8 }}>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:4, flexWrap:"wrap" }}>
+                      <span style={{ fontWeight:800, fontSize:14, color:t.text }}>{r.symbol}</span>
+                      <Badge label={r.type} color={MAESTROS_COLORS[r.type]} t={t}/>
+                      {r.currentValue===0 && <Badge label="sin posición" t={t}/>}
+                      {(r.alertHigh>0||r.alertLow>0) && <Badge label="🔔 alerta" color="#f59e0b" t={t}/>}
+                      {cot && <Badge label="● LIVE" color={t.green} t={t}/>}
+                    </div>
+                    <div style={{ fontSize:10, color:t.subtle, marginBottom:r.currentValue>0?4:0 }}>{r.name}</div>
+                    {r.targetPrice>0 && <div style={{ fontSize:9, color:"#8b5cf6" }}>🎯 Target {fARS(r.targetPrice)}</div>}
+                    {r.notes && <div style={{ fontSize:9, color:t.muted, marginTop:3, fontStyle:"italic", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:180 }}>📝 {r.notes}</div>}
+                    {cot && <div style={{ fontSize:9, color:t.muted, marginTop:3 }}>📊 Max {fARS(cot.maximo)} · Min {fARS(cot.minimo)}</div>}
                   </div>
-                  <div style={{ fontSize:10, color:t.subtle, marginBottom:r.currentValue>0?4:0 }}>{r.name}</div>
-                  {r.targetPrice>0 && <div style={{ fontSize:9, color:"#8b5cf6" }}>🎯 Target {fARS(r.targetPrice)}</div>}
-                  {r.notes && <div style={{ fontSize:9, color:t.muted, marginTop:3, fontStyle:"italic", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:180 }}>📝 {r.notes}</div>}
+                  {r.currentValue > 0 && (
+                    <div style={{ textAlign:"right", flexShrink:0 }}>
+                      <div style={{ fontSize:14, fontWeight:700, color:t.text }}>{fARS(r.currentValue)}</div>
+                      <div style={{ fontSize:12, color:r.rendimiento>=0?t.green:t.red, fontWeight:700 }}>{fPct(r.rendimiento)}</div>
+                      <Sparkline rend={r.rendimiento} color={r.rendimiento>=0?t.green:t.red}/>
+                      <div style={{ fontSize:8, color:t.muted }}>{((r.currentValue/total)*100).toFixed(1)}% cartera</div>
+                    </div>
+                  )}
                 </div>
-                {r.currentValue > 0 && (
-                  <div style={{ textAlign:"right", flexShrink:0 }}>
-                    <div style={{ fontSize:14, fontWeight:700, color:t.text }}>{fARS(r.currentValue)}</div>
-                    <div style={{ fontSize:12, color:r.rendimiento>=0?t.green:t.red, fontWeight:700 }}>{fPct(r.rendimiento)}</div>
-                    <Sparkline rend={r.rendimiento} color={r.rendimiento>=0?t.green:t.red}/>
-                    <div style={{ fontSize:8, color:t.muted }}>{((r.currentValue/total)*100).toFixed(1)}% cartera</div>
-                  </div>
-                )}
+                <div style={{ display:"flex", gap:5, marginTop:8, paddingTop:8, borderTop:`1px solid ${t.border}` }}>
+                  <button onClick={()=>setNoteModal(i)}  style={{ ...btn(false), padding:"5px 8px", fontSize:10, flex:1 }}>📝 Nota</button>
+                  <button onClick={()=>setAlertModal(i)} style={{ ...btn(false), padding:"5px 8px", fontSize:10, flex:1 }}>🔔 Alerta</button>
+                  {editing && <button onClick={async()=>{ if(r._id) await deletePortfolioRow(r._id); setPortfolio(p=>p.filter((_,j)=>j!==i)) }} style={{ background:"#ef4444", border:"none", borderRadius:7, padding:"5px 9px", color:"white", cursor:"pointer", fontSize:10 }}>✕</button>}
+                </div>
               </div>
-              <div style={{ display:"flex", gap:5, marginTop:8, paddingTop:8, borderTop:`1px solid ${t.border}` }}>
-                <button onClick={()=>setNoteModal(i)}  style={{ ...btn(false), padding:"5px 8px", fontSize:10, flex:1 }}>📝 Nota</button>
-                <button onClick={()=>setAlertModal(i)} style={{ ...btn(false), padding:"5px 8px", fontSize:10, flex:1 }}>🔔 Alerta</button>
-                {editing && <button onClick={async()=>{ if(r._id) await deletePortfolioRow(r._id); setPortfolio(p=>p.filter((_,j)=>j!==i)) }} style={{ background:"#ef4444", border:"none", borderRadius:7, padding:"5px 9px", color:"white", cursor:"pointer", fontSize:10 }}>✕</button>}
-              </div>
-            </div>
-          ))}
+            )
+          })}
           {editing && (
             <div style={{ ...card, border:`1px dashed ${t.border}` }}>
               <span style={{ fontSize:8, color:t.muted, letterSpacing:"2px", display:"block", marginBottom:8 }}>AGREGAR ACTIVO</span>
@@ -512,7 +617,7 @@ export default function App() {
         <>
           <div style={{ fontSize:8, color:t.muted, letterSpacing:"2px", marginBottom:10 }}>ESTRATEGIAS · GRANDES INVERSORES</div>
           <div style={{ ...card, background:isDark?"#0d1f35":"#eff6ff", border:`1px solid ${t.blue}33`, marginBottom:14 }}>
-            <div style={{ fontSize:11, color:t.blue, lineHeight:1.6 }}>🧠 Comparás tu cartera con las estrategias de los mejores. Análisis basado en su filosofía de inversión pública.</div>
+            <div style={{ fontSize:11, color:t.blue, lineHeight:1.6 }}>🧠 Comparás tu cartera con las estrategias de los mejores inversores del mundo.</div>
           </div>
           {INVERSORES.map((m,i) => (
             <div key={i} style={{ ...card, cursor:"pointer", border:`1px solid ${maestroSel===i?t.accent:t.border}` }} onClick={()=>setMaestroSel(maestroSel===i?null:i)}>
@@ -563,6 +668,7 @@ export default function App() {
                   <div style={{ display:"flex", alignItems:"center", gap:7, marginBottom:3 }}>
                     <span style={{ fontWeight:800, fontSize:16, color:c.color }}>{c.symbol}</span>
                     <Badge label="NYSE" t={t}/>
+                    {cotizaciones[c.symbol] && <Badge label={`$${cotizaciones[c.symbol].ultimo}`} color={t.green} t={t}/>}
                   </div>
                   <div style={{ fontSize:11, color:t.subtle }}>{c.name}</div>
                   <div style={{ fontSize:9, color:t.muted }}>🧪 {c.focus}</div>
